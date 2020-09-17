@@ -1,14 +1,42 @@
 import pandas as pd
 from datetime import datetime
-def lambda_handler():
-    # create a dataframe for NYtimes US Covid data
+import boto3
+
+from boto3.dynamodb.conditions import Key
+
+def lambda_handler(event, context):
     NyTimesUrl = "https://raw.githubusercontent.com/nytimes/covid-19-data/master/us.csv"
-    df = pd.read_csv(NyTimesUrl, error_bad_lines=False)
+    JhUrl = "https://raw.githubusercontent.com/datasets/covid-19/master/data/time-series-19-covid-combined.csv"
+    
+    cleanDf = clean(NyTimesUrl, JhUrl)
+
+    # initialize database
+    client = boto3.resource('dynamodb', region_name='us-east-1')
+    table = client.Table('US_covid')
+    
+    #PROBLEM
+    for i in range(len(cleanDf["Date"])):
+        dfdate = cleanDf["Date"][i].strftime('%Y-%m-%d')
+        response = table.get_item(Key="Date":dfdate)
+        if dfdate not in response:
+            table.put_item(Item={
+                "Date":dfdate,
+                "Cases":cleanDf["Cases"][i],
+                "Deaths":cleanDf["Deaths"][i],
+                "Recovered":cleanDf["Recovered"][i]
+            })
+    
+    return {
+        "statusCode": 200,
+    }
+    
+def clean(src1, src2):
+    # create a dataframe for NYtimes US Covid data
+    df = pd.read_csv(src1, error_bad_lines=False)
     df = df.set_index("date")
 
     # create a dataframe for John Hopkins data
-    JhUrl = "https://raw.githubusercontent.com/datasets/covid-19/master/data/time-series-19-covid-combined.csv"
-    dl = pd.read_csv(JhUrl, error_bad_lines=False)
+    dl = pd.read_csv(src2, error_bad_lines=False)
 
     # delete non-us data from dl dataframe
     droppable_us = []
@@ -34,5 +62,5 @@ def lambda_handler():
     # change the date col from string to datetime
     for i in range(len(result["Date"])):
         result["Date"][i] = datetime.strptime(result["Date"][i], "%Y-%m-%d")
-
-lambda_handler()
+        
+    return result
