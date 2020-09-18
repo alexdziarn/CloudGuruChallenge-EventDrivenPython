@@ -1,6 +1,7 @@
 import pandas as pd
 from datetime import datetime
 import boto3
+from io import StringIO
 
 from boto3.dynamodb.conditions import Key
 
@@ -10,22 +11,38 @@ def lambda_handler(event, context):
     
     cleanDf = clean(NyTimesUrl, JhUrl)
 
-    # initialize database
-    client = boto3.resource('dynamodb', region_name='us-east-1')
-    table = client.Table('US_covid')
-    
-    #PROBLEM
-    for i in range(len(cleanDf["Date"])):
-        dfdate = cleanDf["Date"][i].strftime('%Y-%m-%d')
-        response = table.get_item(Key="Date":dfdate)
-        if dfdate not in response:
-            table.put_item(Item={
-                "Date":dfdate,
-                "Cases":cleanDf["Cases"][i],
-                "Deaths":cleanDf["Deaths"][i],
-                "Recovered":cleanDf["Recovered"][i]
-            })
-    
+    # convert cleanDf into csv and store in s3
+    bucket = 'aws-covid-alex' # already created on S3
+    csv_buffer = StringIO()
+    cleanDf.to_csv(csv_buffer)
+    s3_resource = boto3.resource('s3')
+    key_name = 'covid_data.csv'
+    s3_resource.Object(bucket, key_name).put(Body=csv_buffer.getvalue())
+        
+    # insert cleanDf into dynamodb
+    s3 = boto3.client('s3')
+    dyndb = boto3.client('dynamodb', region_name='us-east-1')
+    confile = s3.get_object(Bucket=bucket, Key=key_name)
+    recList = confile['Body'].read().split('\n')
+    firstrecord = True
+    csv_reader = csv.reader(recList, delimiter=',', quotechar='"')
+    for row in csv_reader:
+        if (firstrecord):
+            firstrecord=False
+            continue
+        Date = row[0].replace(',','').replace('/','').replace(' ','').replace(':','') if row[0] else 0
+        Cases = row[1].replace(',','') if row[1] else 0
+        Deaths = row[2].replace(',','') if row[2] else 0
+        Recovered = row[3].replace(',','') if row[2] else 0
+        response = dyndb.put_item(
+            TableName='US_covid',
+            Item={
+            'Date': {'N': str(Date)},
+            'Cases': {'N': str(Cases)},
+            'Deaths': {'N': str(Deaths)},
+            'Recovered': {'N': str(Recovered)}
+            }
+        )
     return {
         "statusCode": 200,
     }
